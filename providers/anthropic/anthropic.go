@@ -152,12 +152,22 @@ func (p *Provider) Completion(
 		return nil, err
 	}
 
-	resp, err := p.client.Messages.New(ctx, req)
+	resp, err := p.client.Messages.New(ctx, req, promptCacheRequestOptions(params)...)
 	if err != nil {
 		return nil, p.ConvertError(err)
 	}
 
 	return convertResponse(resp), nil
+}
+
+// promptCacheRequestOptions returns the per-request options needed for prompt
+// caching — currently the beta header that enables the 1-hour cache TTL. Empty
+// when CachePrompt is not set, so non-caching calls are unaffected.
+func promptCacheRequestOptions(params providers.CompletionParams) []option.RequestOption {
+	if !params.CachePrompt {
+		return nil
+	}
+	return []option.RequestOption{option.WithHeaderAdd("anthropic-beta", promptCacheBetaHeader)}
 }
 
 // convertParams converts providers.CompletionParams to Anthropic request parameters.
@@ -236,7 +246,7 @@ func (p *Provider) CompletionStream(
 			return
 		}
 
-		stream := p.client.Messages.NewStreaming(ctx, req)
+		stream := p.client.Messages.NewStreaming(ctx, req, promptCacheRequestOptions(params)...)
 		state := newStreamState()
 
 		for stream.Next() {
@@ -380,19 +390,35 @@ func (s *streamState) handleTextDelta(text string) *providers.ChatCompletionChun
 	return &chunk
 }
 
+// promptCacheBetaHeader enables the 1-hour cache TTL on the standard Messages
+// API. Without it the API honors only the default 5-minute TTL.
+const promptCacheBetaHeader = "extended-cache-ttl-2025-04-11"
+
+// newPromptCacheControl returns a 1-hour ephemeral breakpoint. The agentic
+// loops that use prompt caching re-send a large, stable tools+system prefix
+// across many iterations and across turns within an hour, so the longer TTL
+// keeps the prefix warm through normal usage gaps (the 1h header is added on
+// the request in Completion/CompletionStream when CachePrompt is set).
+func newPromptCacheControl() anthropic.CacheControlEphemeralParam {
+	cc := anthropic.NewCacheControlEphemeralParam()
+	cc.TTL = anthropic.CacheControlEphemeralTTLTTL1h
+	return cc
+}
+
 // applyPromptCaching marks the stable prompt prefix with ephemeral
 // cache_control breakpoints so Anthropic reuses it across requests. The
 // breakpoint on the last tool caches the tools block; the breakpoint on the
 // last system block caches the tools+system prefix. Both are no-ops below the
 // model's minimum cacheable length, so this is always safe to set.
 func applyPromptCaching(req *anthropic.MessageNewParams) {
+	cc := newPromptCacheControl()
 	if n := len(req.Tools); n > 0 {
 		if t := req.Tools[n-1].OfTool; t != nil {
-			t.CacheControl = anthropic.NewCacheControlEphemeralParam()
+			t.CacheControl = cc
 		}
 	}
 	if n := len(req.System); n > 0 {
-		req.System[n-1].CacheControl = anthropic.NewCacheControlEphemeralParam()
+		req.System[n-1].CacheControl = cc
 	}
 }
 

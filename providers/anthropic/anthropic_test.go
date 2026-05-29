@@ -1350,10 +1350,12 @@ func TestConvertParams_CachePrompt(t *testing.T) {
 
 		require.Len(t, req.System, 1)
 		require.Equal(t, "ephemeral", string(req.System[0].CacheControl.Type))
+		require.Equal(t, "1h", string(req.System[0].CacheControl.TTL))
 
 		require.Len(t, req.Tools, 1)
 		require.NotNil(t, req.Tools[0].OfTool)
 		require.Equal(t, "ephemeral", string(req.Tools[0].OfTool.CacheControl.Type))
+		require.Equal(t, "1h", string(req.Tools[0].OfTool.CacheControl.TTL))
 	})
 
 	t.Run("CachePrompt true with tools but no system marks the tool only", func(t *testing.T) {
