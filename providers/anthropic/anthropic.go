@@ -393,14 +393,20 @@ func (s *streamState) handleTextDelta(text string) *providers.ChatCompletionChun
 // breakpoint on the last tool caches the tools block; the breakpoint on the
 // last system block caches the tools+system prefix. Both are no-ops below the
 // model's minimum cacheable length, so this is always safe to set.
+//
+// TTL is set to 1h, which is GA on the standard Messages API (no beta header
+// required). Agentic loops reuse the same system+tools prefix across many
+// iterations and across turns within an hour, so the longer TTL maximizes hits.
 func applyPromptCaching(req *anthropic.MessageNewParams) {
+	cc := anthropic.NewCacheControlEphemeralParam()
+	cc.TTL = anthropic.CacheControlEphemeralTTLTTL1h
 	if n := len(req.Tools); n > 0 {
 		if t := req.Tools[n-1].OfTool; t != nil {
-			t.CacheControl = anthropic.NewCacheControlEphemeralParam()
+			t.CacheControl = cc
 		}
 	}
 	if n := len(req.System); n > 0 {
-		req.System[n-1].CacheControl = anthropic.NewCacheControlEphemeralParam()
+		req.System[n-1].CacheControl = cc
 	}
 }
 
